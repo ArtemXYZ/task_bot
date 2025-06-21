@@ -1,0 +1,11 @@
+config_bot.py
+.env
+.idea/*.*
+.venv/*.*
+/.idea/inspectionProfiles/profiles_settings.xml
+/local_base.db
+.idea/inspectionProfiles/profiles_settings.xml
+*.tar
+dockerfile
+.idea/
+/.idea/inspectionProfiles/Project_Default.xml
