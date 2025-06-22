@@ -128,8 +128,6 @@ def construct_inline_button(inline_keyboard_instance, callback_button_pack: tupl
         Конструктор inline buttons
     """
 
-
-
     # Распаковка кортежа:
     _text, _callback = callback_button_pack
 

@@ -5,8 +5,7 @@ import datetime
 from typing import List
 
 # -------------------------------- Стандартные модули
-# from string import punctuation
-# import traceback
+import re
 # -------------------------------- Сторонние библиотеки
 from aiogram import Bot, types
 from aiogram.types import Message, CallbackQuery
@@ -16,7 +15,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import CommandStart, StateFilter, CommandObject, or_f
 
 # -------------------------------- Локальные модули
-from filters.chats_filters import ChatTypeFilter
+
+from services.aiohttp_session import AiohttpAdapter
 from states.states import *
 from buttons.inline_buttons import *  # Кнопки встроенного меню - для сообщений
 from buttons.keyboard_buttons import *  # Кнопки встроенного меню - для сообщений
@@ -24,8 +24,8 @@ from config.replicas import *
 
 # Назначаем роутер для всех типов чартов:
 main_router = Router()
-
-
+aiohttp_adapter = AiohttpAdapter()
+HEADERS = {"Content-Type": "application/json"}
 # ----------------------------------------------------------------------------------------------------------------------
 # ------------------------------------------------------- Главное меню
 # Прием СТАРТА / Примет только кнопку старт
@@ -57,41 +57,59 @@ async def start(message: Message, state: FSMContext, bot: Bot):
 
 
 # ----------------------------------------------- SHOW_TASKS
-@main_router.message(F.text == SHOW_TASKS)
+@main_router.message((F.text == SHOW_TASKS) | (F.text == '/show_tasks'))
 async def show_tasks(message: Message, state: FSMContext, bot: Bot):
     """
         Ответ на кнопку '🔍 ПОКАЗАТЬ ЗАДАЧИ'.
     """
 
-    # #  todo 3.1 вводит список задач :
-    # 1. Сделать отчет (дедлайн: 25.11.2024)
-    # 2. Купить продукты (дедлайн: 20.11.2024)
+    try:
 
-    # запрос к API
-    pass
-    #  todo 3. Пользователь вводит /show_tasks бот получает список задач от API:
-    # Запрос к API на список задач:
-    # tasks: dict = {}
-
-    # task_list: list= [key, value  for tasks]
-
-    task_list = []
-
-    # Проверка статуса ошибки:
-    if task_list:
-
-        await message.reply(
-            text=f'💬 Список задач:\n\n'
-                 f'🔻 {task_list if task_list else 'Хранилище пусто, задачи еще не были добавлены.'}',
+        # Запрос к API на список задач:
+        task_catalog: dict = await aiohttp_adapter.get_async_response(
+            url='http://localhost:8000/api/tasks/list',
+            headers=HEADERS
         )
 
-    else:
+        task_list = task_catalog.get('task_list')
+
+        if not task_list:
+            message_text = "📭 Хранилище пусто, задачи еще не были добавлены."
+        else:
+            tasks_text = "\n".join(
+                f"{i+1}. {task['task']} (до {task['deadline']})"
+                for i, task in enumerate(task_list)
+            )
+            message_text = f"📋 Список задач:\n\n🔻  {tasks_text}"
+
+        await message.reply(
+            text=message_text,
+            reply_markup=get_keyboard(
+                ADD_TASK,
+                DELETE_TASK,
+                SHOW_TASKS,
+                START,
+                placeholder="Введите команду",
+                sizes=(1, 1, 1, 1)
+            )
+        )
+
+    except Exception as error:
+        print(error)
 
         await message.reply(
             text=f'💬 Ошибка запроса списка задач, подробности:\n\n'
-                 f'🔻 {task_list }',
-        )
+                 f'🔻 {error}',
+            reply_markup=get_keyboard(
+                ADD_TASK,
+                DELETE_TASK,
+                SHOW_TASKS,
+                START,
+                placeholder="Введите команду",
+                sizes=(1, 1, 1, 1)
+            )
 
+        )
 # ----------------------------------------------- SHOW_TASKS
 
 # ----------------------------------------------- DELETE_TASK
@@ -103,28 +121,53 @@ async def start_delete_task(message: Message, state: FSMContext, bot: Bot):
 
     try:
         #  Запрос к API на список задач:
-        task_catalog = []
-
-        await message.reply(
-            text=f'💬 Выберите, какую необходимо удалить!',
-            reply_markup=create_catalog_buttons(
-                task_catalog,
-                task_name='Задача ',
-                callback_prefix='del_task_'
-            )
+        task_catalog: dict = await aiohttp_adapter.get_async_response(
+            url='http://localhost:8000/api/tasks/list',
+            headers=HEADERS
         )
 
+        task_list = task_catalog.get('task_list')
+
+        if task_list:
+
+            await message.reply(
+                text=f'💬 Выберите, какую необходимо удалить!',
+                reply_markup=create_catalog_buttons(
+                    task_catalog.get('task_list'),
+                    task_name='Задача ',
+                    callback_prefix='del_task_'
+                )
+            )
+
+        else:
+
+            await message.reply(
+                text='📭 Хранилище пусто, задачи еще не были добавлены, удалять нечего!',
+                reply_markup=get_keyboard(
+                    ADD_TASK,
+                    DELETE_TASK,
+                    SHOW_TASKS,
+                    START,
+                    placeholder="Введите команду",
+                    sizes=(1, 1, 1, 1)
+                )
+            )
 
     except Exception as error:
-        print(
-            f'⛔️ Ошибка: {error}'
-        )
+        print(error)
 
         await message.reply(
             text=f'💬 Ошибка запроса списка задач, подробности:\n\n'
                  f'🔻 {error}',
+            reply_markup=get_keyboard(
+                ADD_TASK,
+                DELETE_TASK,
+                SHOW_TASKS,
+                START,
+                placeholder="Введите команду",
+                sizes=(1, 1, 1, 1)
+            )
         )
-
 
     # Устанавливаем состояние:
     await state.set_state(Task.delete_task)
@@ -139,12 +182,20 @@ async def delete_task(callback: CallbackQuery, state: FSMContext, bot: Bot):
     # Ответ на сервер, что кнопку нажали.
     await callback.answer()
 
-    try:
-        #  Запрос к API на список задач:
-        task_catalog = []
+    # Получить callback, номер айди:
+    # Ищем число в конце строки
+    match = re.search(r'\d+$', callback.data)
+    task_id = match.group()
 
-        await callback.reply(
-            text=f'💬 Задача успешно удалена!'
+    try:
+
+        response = await aiohttp_adapter.delete_async_response(
+            url=f'http://localhost:8000/api/tasks/delete/{task_id}',
+            headers=HEADERS
+        )
+
+        await callback.message.edit_text(
+            text=f'💬 Задача успешно удалена!\n\n🔻 Подробности: {response}',
         )
 
     except Exception as error:
@@ -152,7 +203,7 @@ async def delete_task(callback: CallbackQuery, state: FSMContext, bot: Bot):
             f'⛔️ Ошибка: {error}'
         )
 
-        await callback.reply(
+        await callback.message.edit_text(
             text=f'💬 Ошибка удаления задачи, подробности:\n\n'
                  f'🔻 {error}',
         )
@@ -200,6 +251,8 @@ async def set_deadline(message: Message, state: FSMContext, bot: Bot):
         Принимает новую ЗАДАЧУ. Ожидаем состояние: Task.task_data.
     """
 
+    # response: None | dict = None
+
     deadline_message_text = message.text
 
     # Получаем данные:
@@ -210,29 +263,26 @@ async def set_deadline(message: Message, state: FSMContext, bot: Bot):
         'task': task_message_text,
         'deadline': deadline_message_text,
     }
+    # ------------------------- 1 / Ошибки запроса:
+    try:
+        # Запрос на сервер и подтверждение добавления (пришлет ответ):
+        response = await aiohttp_adapter.post_async_response(
+            url='http://localhost:8000/api/tasks/add',
+            json=payload,
+            headers=HEADERS
+        )
 
-    print(
-        f'Имитация отправки в хранилище данных \n'
-        f' {payload}'
-    )
-
-    # Запрос пост через апи.
-    # todo Бот отправляет запрос на сервер и подтверждает добавление.
-    pass
-
-
-    task_list = True
-
-    # Проверка статуса ошибки:
-    if task_list:
+        # ------------------------- При успехе:
+        id_task = response.get('id')
 
         await message.reply(
             text=f'💬 Задача успешно добавлена!\n\n'
                  f'🔻 Подробности:\n'
+                 f' 🔹 Id: [{id_task}]\n'
                  f' 🔹 Задача:\n'
-                 f' {task_message_text}\n'
+                 f' [{task_message_text}]\n'
                  f' 🔹 Дедлайн:\n'
-                 f' {deadline_message_text}\n',
+                 f' [{deadline_message_text}]\n',
             reply_markup=get_keyboard(
                 ADD_TASK,
                 DELETE_TASK,
@@ -243,17 +293,52 @@ async def set_deadline(message: Message, state: FSMContext, bot: Bot):
             )
         )
 
-    else:
+    except Exception as error:
 
+        print(error)
         await message.reply(
             text=f'💬 Ошибка запроса на добавление задачи, подробности:\n\n'
-                 f'🔻 {task_list}',
+                 f'🔻 {error}',
+            reply_markup=get_keyboard(
+                ADD_TASK,
+                DELETE_TASK,
+                SHOW_TASKS,
+                START,
+                placeholder="Введите команду",
+                sizes=(1, 1, 1, 1)
+            )
         )
 
     await state.clear()
-
 # ----------------------------------------------- ADD_TASK
 
 
 
 
+#
+# # ------------------------- 2 / Ошибки валидации:
+# if response:
+#
+#     # Проверка статуса ошибки:
+#     detail = response.get('detail')
+#
+#     if detail:
+#         print(
+#             f'⛔️ Ошибка валидации входных данных, подробности:\n\n'
+#             f'🔻  {detail}'
+#         )
+#
+#         await message.reply(
+#             text=f'⛔️ Ошибка валидации входных данных, подробности:\n\n'
+#                  f'🔻  {detail}',
+#             reply_markup=get_keyboard(
+#                 ADD_TASK,
+#                 DELETE_TASK,
+#                 SHOW_TASKS,
+#                 START,
+#                 placeholder="Введите команду",
+#                 sizes=(1, 1, 1, 1)
+#             )
+#         )
+#
+# else:
